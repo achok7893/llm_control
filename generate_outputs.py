@@ -6,6 +6,7 @@ import sys
 import json
 import logging
 import time
+import traceback 
 
 os.system("pip install --upgrade openai")
 os.system("pip install openpyxl")
@@ -27,7 +28,7 @@ client = AzureOpenAI(
     api_version="2023-12-01-preview",
     azure_endpoint =params["azure_endpoint"]
 )
-
+container_client = blob_service_client.get_container_client(container_name)
 
 def get_current_time():
     """Get current time in string format"""
@@ -116,6 +117,20 @@ def process_one_input(x):
 
     return copy.deepcopy(res_)
 
+
+def overwrite_file_in_azure_storage(local_path, remote_name):
+    try:
+        blob_client = container_client.get_blob_client(remote_name)
+        blob_client.delete_blob()
+        logging.info(f"file {remote_name} is deleted")
+    except:
+        logging.info(f"file {remote_name} is not present")
+        
+    with open(local_path, "rb") as data:
+        container_client.upload_blob(name=remote_name, data=data)
+        logging.info(f"file {remote_name} uploaded")
+
+
 if __name__=="__main__":
     try:
         log_path_file = set_logging_policy()
@@ -126,7 +141,6 @@ if __name__=="__main__":
         df_raw.loc[:,"CR_raw"] = df_raw.loc[:,"contenu"].apply(get_cr)
 
         l_resultats = []
-        container_client = blob_service_client.get_container_client(container_name)
 
         for i in range(df_raw.shape[0]):
             logging.info(f"Iteration {i}")
@@ -143,24 +157,16 @@ if __name__=="__main__":
                         logging.info(f"retry after 300 s")
                         time.spleep(300)
                         l_resultats.append(process_one_input(df_raw.loc[:,"CR_raw"].iloc[i]))
+                        
                 logging.info("response obtained")
                 pd.DataFrame(l_resultats).to_pickle("./fictifs_cr.pickle")
-                try:
-                    blob_client = container_client.get_blob_client("fictifs_cr.pickle")
-                    blob_client.delete_blob()
-                    logging.info("Excel File deleted")
-                except:
-                    logging.info("No file to delete")        
-                            # Upload the file to Azure Blob Storage
-                with open("fictifs_cr.pickle", "rb") as data:
-                    container_client.upload_blob(name="fictifs_cr.pickle", data=data)
-                    logging.info("file uploaded")
-                logging.info(f"File '{local_file_path}' uploaded to Blob Storage.")
+                
+                overwrite_file_in_azure_storage("./fictifs_cr.pickle", "fictifs_cr.pickle")
+                
+                overwrite_file_in_azure_storage(log_path_file, log_path_file)
                 
                 with open(log_path_file, "rb") as data:
                     container_client.upload_blob(name=log_path_file, data=data)
                     logging.info("file uploaded")
     except:
-        with open(log_path_file, "rb") as data:
-            container_client.upload_blob(name=log_path_file, data=data)
-            logging.info("file uploaded")
+        overwrite_file_in_azure_storage(log_path_file, log_path_file)
