@@ -2,7 +2,10 @@
 import pandas as pd
 import copy
 import os
+import sys
 import json
+import logging
+import time
 
 os.system("pip install --upgrade openai")
 os.system("pip install openpyxl")
@@ -11,7 +14,6 @@ os.system("pip install azure-storage-file-datalake azure-identity")
 from openai import AzureOpenAI
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azureml.core import Workspace
-
 
 params = json.load(open("./secrets.json","r"))
 storage_account_name = params["storage_account_name"]
@@ -25,6 +27,36 @@ client = AzureOpenAI(
     api_version="2023-12-01-preview",
     azure_endpoint =params["azure_endpoint"]
 )
+
+
+def get_current_time():
+    """Get current time in string format"""
+    import time
+    strings = time.strftime("%Y,%m,%d,%H,%M,%S")
+    t = strings.split(',')
+    str_current_time = "".join([str(x) for x in t])
+    return str_current_time
+
+
+def set_logging_policy():
+    "Set logging policy"
+
+    current_time = get_current_time()
+    log_path_file = f'.logs_{current_time}.log'
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                        datefmt='%m-%d %H:%M:%S',
+                        filename=log_path_file,
+                        filemode='w')
+    logger = logging.getLogger('logger')
+
+    def exc_handler(exctype, value, tb):
+        logger.exception(
+            ''.join(traceback.format_exception(exctype, value, tb)))
+    sys.excepthook = exc_handler
+    
+    return log_path_file
+
 
 def get_cr(x):
     l = x.split("__________________")
@@ -85,28 +117,50 @@ def process_one_input(x):
     return copy.deepcopy(res_)
 
 if __name__=="__main__":
+    try:
+        log_path_file = set_logging_policy()
 
-    df_raw = pd.read_csv("./CR_TH.csv", sep=";")
-    df_raw.loc[:,"CR_raw"] = df_raw.loc[:,"contenu"].apply(get_cr)
+        logging.info("Reading input dataset")
+        df_raw = pd.read_csv("./CR_TH.csv", sep=";")
+        logging.info("processing input column")
+        df_raw.loc[:,"CR_raw"] = df_raw.loc[:,"contenu"].apply(get_cr)
 
-    l_resultats = []
-    container_client = blob_service_client.get_container_client(container_name)
-    
-    for i in range(df_raw.shape[0]):
-        print(f"Iteration {i}")
-        for j in range(2):
-            print(f"SubIteration {j}")
-            l_resultats.append(process_one_input(df_raw.loc[:,"CR_raw"].iloc[i]))
-            print("response obtained")
-            pd.DataFrame(l_resultats).to_pickle("./fictifs_cr.pickle")
-            try:
-                blob_client = container_client.get_blob_client("fictifs_cr.pickle")
-                blob_client.delete_blob()
-                print("Excel File deleted")
-            except:
-                print("No file to delete")        
-                        # Upload the file to Azure Blob Storage
-            with open("fictifs_cr.pickle", "rb") as data:
-                container_client.upload_blob(name="fictifs_cr.pickle", data=data)
-                print("file uploaded")
-            print(f"File '{local_file_path}' uploaded to Blob Storage.")
+        l_resultats = []
+        container_client = blob_service_client.get_container_client(container_name)
+
+        for i in range(df_raw.shape[0]):
+            logging.info(f"Iteration {i}")
+            for j in range(2):
+                logging.info(f"SubIteration {j}")
+                try:
+                    l_resultats.append(process_one_input(df_raw.loc[:,"CR_raw"].iloc[i]))
+                except:
+                    try:
+                        logging.info(f"retry after 60 s")
+                        time.sleep(60)
+                        l_resultats.append(process_one_input(df_raw.loc[:,"CR_raw"].iloc[i]))
+                    except:
+                        logging.info(f"retry after 300 s")
+                        time.spleep(300)
+                        l_resultats.append(process_one_input(df_raw.loc[:,"CR_raw"].iloc[i]))
+                logging.info("response obtained")
+                pd.DataFrame(l_resultats).to_pickle("./fictifs_cr.pickle")
+                try:
+                    blob_client = container_client.get_blob_client("fictifs_cr.pickle")
+                    blob_client.delete_blob()
+                    logging.info("Excel File deleted")
+                except:
+                    logging.info("No file to delete")        
+                            # Upload the file to Azure Blob Storage
+                with open("fictifs_cr.pickle", "rb") as data:
+                    container_client.upload_blob(name="fictifs_cr.pickle", data=data)
+                    logging.info("file uploaded")
+                logging.info(f"File '{local_file_path}' uploaded to Blob Storage.")
+                
+                with open(log_path_file, "rb") as data:
+                    container_client.upload_blob(name=log_path_file, data=data)
+                    logging.info("file uploaded")
+    except:
+        with open(log_path_file, "rb") as data:
+            container_client.upload_blob(name=log_path_file, data=data)
+            logging.info("file uploaded")
