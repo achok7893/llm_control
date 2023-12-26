@@ -165,8 +165,5 @@ if __name__=="__main__":
                 
                 overwrite_file_in_azure_storage(log_path_file, log_path_file)
                 
-                with open(log_path_file, "rb") as data:
-                    container_client.upload_blob(name=log_path_file, data=data)
-                    logging.info("file uploaded")
     except:
         overwrite_file_in_azure_storage(log_path_file, log_path_file)
