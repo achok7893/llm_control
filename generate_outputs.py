@@ -42,7 +42,7 @@ def set_logging_policy():
     "Set logging policy"
 
     current_time = get_current_time()
-    log_path_file = f'.logs_{current_time}.log'
+    log_path_file = f'./logs_{current_time}.log'
     logging.basicConfig(level=logging.INFO,
                         format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                         datefmt='%m-%d %H:%M:%S',
